@@ -1,0 +1,191 @@
+---
+description: This file contains several structure and rules that I want to be used when doing data analysis.
+globs: 
+alwaysApply: false
+---
+## Checking basic data information
+def check_data_information(
+    data: pd.DataFrame, 
+    cols: Optional[List[str]] = None,
+    sample_size: int = 5,
+    include_memory_usage: bool = False,
+    include_stats: bool = False
+) -> pd.DataFrame:
+    """
+    Generate comprehensive data information summary for specified columns.
+    
+    This function provides detailed statistics about DataFrame columns including
+    data types, null values, duplicates, unique values, and sample data.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        The input DataFrame to analyze
+    cols : List[str], optional
+        List of column names to analyze. If None, analyzes all columns
+    sample_size : int, default 5
+        Number of unique values to sample for display
+    include_memory_usage : bool, default False
+        Whether to include memory usage information
+    include_stats : bool, default False
+        Whether to include basic statistics for numeric columns
+        
+    Returns
+    -------
+    pd.DataFrame
+        Summary DataFrame with columns:
+        - Feature: Column name
+        - Data Type: Data type of the column
+        - Null Values: Count of null values
+        - Null Percentage: Percentage of null values
+        - Duplicated Values: Count of duplicated rows (same for all columns)
+        - Unique Values: Count of unique values
+        - Unique Sample: Sample of unique values
+        - Memory Usage: Memory usage in bytes (if include_memory_usage=True)
+        - Min/Max/Mean: Basic stats for numeric columns (if include_stats=True)
+        
+    Raises
+    ------
+    ValueError
+        If data is not a DataFrame or if specified columns don't exist
+    TypeError
+        If cols is not a list or None
+        
+    Examples
+    --------
+    >>> df = pd.DataFrame({'A': [1, 2, 3, None], 'B': ['x', 'y', 'x', 'z']})
+    >>> info_df = check_data_information(df)
+    >>> print(info_df)
+    
+    >>> # Analyze specific columns with custom sample size
+    >>> info_df = check_data_information(df, cols=['A'], sample_size=3)
+    """
+    # Input validation
+    if not isinstance(data, pd.DataFrame):
+        raise ValueError("Input 'data' must be a pandas DataFrame")
+    
+    if data.empty:
+        raise ValueError("Input DataFrame is empty")
+    
+    if cols is None:
+        cols = data.columns.tolist()
+    elif not isinstance(cols, (list, tuple)):
+        raise TypeError("Parameter 'cols' must be a list, tuple, or None")
+    
+    # Check if all specified columns exist
+    missing_cols = [col for col in cols if col not in data.columns]
+    if missing_cols:
+        raise ValueError(f"Columns not found in DataFrame: {missing_cols}")
+    
+    if sample_size < 1:
+        raise ValueError("sample_size must be at least 1")
+    
+    # Calculate duplicated rows once (same for all columns)
+    total_duplicates = data.duplicated().sum()
+    total_rows = len(data)
+    
+    list_items = []
+    
+    for col in cols:
+        col_data = data[col]
+        
+        # Basic information
+        null_count = col_data.isna().sum()
+        null_percentage = round(100 * null_count / total_rows, 2) if total_rows > 0 else 0
+        unique_count = col_data.nunique()
+        
+        # Sample unique values (handle potential issues with conversion)
+        try:
+            unique_vals = col_data.dropna().unique()[:sample_size]
+            if len(unique_vals) == 0:
+                unique_sample = "All NaN"
+            else:
+                # Better handling of different data types
+                unique_sample = ', '.join([
+                    str(val) if not pd.isna(val) else 'NaN' 
+                    for val in unique_vals
+                ])
+        except Exception:
+            unique_sample = "Error displaying sample"
+        
+        # Build row data
+        row_data = [
+            col,                    # Feature name
+            str(col_data.dtype),    # Data type
+            null_count,             # Null count
+            null_percentage,        # Null percentage
+            total_duplicates,       # Duplicated rows
+            unique_count,           # Unique values
+            unique_sample           # Sample values
+        ]
+        
+        # Add memory usage if requested
+        if include_memory_usage:
+            memory_usage = col_data.memory_usage(deep=True)
+            row_data.append(memory_usage)
+        
+        # Add basic statistics for numeric columns if requested
+        if include_stats and pd.api.types.is_numeric_dtype(col_data):
+            non_null_data = col_data.dropna()
+            if len(non_null_data) > 0:
+                row_data.extend([
+                    round(non_null_data.min(), 3),
+                    round(non_null_data.max(), 3),
+                    round(non_null_data.mean(), 3)
+                ])
+            else:
+                row_data.extend([np.nan, np.nan, np.nan])
+        elif include_stats:
+            row_data.extend([np.nan, np.nan, np.nan])
+        
+        list_items.append(row_data)
+    
+    # Build column names
+    columns = [
+        'Feature',
+        'Data Type',
+        'Null Values',
+        'Null Percentage',
+        'Duplicated Values',
+        'Unique Values',
+        'Unique Sample'
+    ]
+    
+    if include_memory_usage:
+        columns.append('Memory Usage (bytes)')
+    
+    if include_stats:
+        columns.extend(['Min', 'Max', 'Mean'])
+    
+    # Create result DataFrame
+    result_df = pd.DataFrame(data=list_items, columns=columns)
+    
+    # Sort by null percentage descending for better insights
+    result_df = result_df.sort_values('Null Percentage', ascending=False).reset_index(drop=True)
+    
+    return result_df
+
+
+# Convenience function for quick analysis
+def quick_data_check(data: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+    """
+    Quick data check focusing on columns with most issues.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Input DataFrame
+    top_n : int, default 10
+        Number of top problematic columns to show
+        
+    Returns
+    -------
+    pd.DataFrame
+        Summary of top problematic columns
+    """
+    full_check = check_data_information(data, include_memory_usage=True)
+    
+    # Sort by null percentage and unique values to identify problematic columns
+    problematic = full_check.nlargest(top_n, 'Null Percentage')
+    
+    return problematic
